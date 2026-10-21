@@ -1,0 +1,23 @@
+# build outputs
+build/
+*.apk
+*.aab
+*.dex
+*.class
+
+# gradle / android studio
+.gradle/
+local.properties
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# python
+__pycache__/
+*.pyc
+
+# misc
+*.log
+.DS_Store
+Thumbs.db
