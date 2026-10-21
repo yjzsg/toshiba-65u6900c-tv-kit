@@ -12,7 +12,7 @@
 |---|---|
 | [`livetv/`](livetv/) | 自建 Android TV 直播 App（`com.local.livetv`），37 个央视/卫视频道，遥控器换台 |
 | [`voicekey/`](voicekey/) | 把遥控器语音键做成**语音输入法**（`com.iflytek.sample.view`），说句话直接上屏到任意输入框 |
-| [`launcher-patch/`](launcher-patch/) | [cleanyourtv](https://github.com/Gathin23/cleanyourtv) 桌面的 API 23 移植与功能补丁（天气卡、程序坞编辑、长按卸载、图标统一） |
+| [`launcher/`](launcher/) | [cleanyourtv](https://github.com/Gathin23/cleanyourtv) v2.5 的 fork：API 23 移植 + 天气卡 / 程序坞编辑 / 长按卸载 / 图标统一 |
 | [`tools/`](tools/) | 设备侧工具：TCL root 通道、APK 结构侦察、部署脚本 |
 | [`docs/`](docs/) | [东芝65U6900C-优化记录.md](docs/东芝65U6900C-优化记录.md) —— 二十余节完整实测记录（内存/CPU 口径、包清单、踩坑、回滚命令） |
 
@@ -44,8 +44,8 @@ CPU                       = 4×Cortex-A53 1.5 GHz（ondemand）
 - `platforms/android-34/android.jar`
 - 一个自己的签名 keystore
 
-`launcher-patch/` 例外，它是 Gradle 工程，需要 JDK 17 + Android SDK Platform 34。
+`launcher/` 例外，它是 Gradle 工程，需要 JDK 17 + Android SDK Platform 34。
 
 ## 许可
 
-本仓库自有代码为 MIT。`launcher-patch/` 修改的上游 [cleanyourtv](https://github.com/Gathin23/cleanyourtv) 亦为 MIT（Copyright © 2026 Gathin），补丁文件保留上游版权声明。
+本仓库自有代码为 MIT。`launcher/` 基于上游 [cleanyourtv](https://github.com/Gathin23/cleanyourtv) 亦为 MIT（Copyright © 2026 Gathin），补丁文件保留上游版权声明。
