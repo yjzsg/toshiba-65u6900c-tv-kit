@@ -46,6 +46,8 @@ public class MainActivity extends Activity {
     private int playToken = 0;
     private boolean listVisible = true;
     private Runnable hideTask;
+    private Runnable stallTask;
+    private static final int STALL_MS = 12000;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -179,7 +181,9 @@ public class MainActivity extends Activity {
         final Ch c = chans.get(curCh);
         if (curUrl >= c.urls.size()) {
             status.setText("无法播放：" + c.name);
+            status.setVisibility(View.VISIBLE);
             Log.e(TAG, "all urls failed: " + c.name);
+            setListVisible(true);
             return;
         }
         final String url = c.urls.get(curUrl);
@@ -202,9 +206,37 @@ public class MainActivity extends Activity {
             public void onPrepared(android.media.MediaPlayer mp) {
                 if (token != playToken) return;
                 Log.i(TAG, "prepared " + c.name);
+                cancelStall();
                 status.setVisibility(View.GONE);
                 vv.start();
                 autoHide();
+            }
+        });
+        vv.setOnInfoListener(new android.media.MediaPlayer.OnInfoListener() {
+            @Override
+            public boolean onInfo(android.media.MediaPlayer mp, int what, int extra) {
+                if (token != playToken) return false;
+                if (what == android.media.MediaPlayer.MEDIA_INFO_BUFFERING_START) {
+                    Log.w(TAG, "buffering " + c.name + " url=" + url);
+                    status.setText("缓冲中 " + c.name + " …");
+                    status.setVisibility(View.VISIBLE);
+                    cancelStall();
+                    stallTask = new Runnable() {
+                        @Override
+                        public void run() {
+                            if (token != playToken) return;
+                            Log.w(TAG, "stall, switch source " + c.name);
+                            curUrl++;
+                            playCurrent();
+                        }
+                    };
+                    h.postDelayed(stallTask, STALL_MS);
+                } else if (what == android.media.MediaPlayer.MEDIA_INFO_BUFFERING_END) {
+                    Log.i(TAG, "buffering end " + c.name);
+                    cancelStall();
+                    status.setVisibility(View.GONE);
+                }
+                return false;
             }
         });
         vv.setOnErrorListener(new android.media.MediaPlayer.OnErrorListener() {
@@ -212,11 +244,19 @@ public class MainActivity extends Activity {
             public boolean onError(android.media.MediaPlayer mp, int what, int extra) {
                 if (token != playToken) return true;
                 Log.e(TAG, "error what=" + what + " extra=" + extra + " url=" + url);
+                cancelStall();
                 curUrl++;
                 playCurrent();
                 return true;
             }
         });
+    }
+
+    private void cancelStall() {
+        if (stallTask != null) {
+            h.removeCallbacks(stallTask);
+            stallTask = null;
+        }
     }
 
     private void autoHide() {

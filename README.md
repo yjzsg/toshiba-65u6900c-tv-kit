@@ -19,7 +19,7 @@
 | 预装常驻 | 广告 / 统计 / 推送 / 应用商店 / OTA / 语音助手全套在跑 | 31 个 `pm hide`（4 个因语音输入法需要已恢复，实冻 27），`rollback.ps1` 一条命令还原 |
 | 装第三方 APK | 被 `com.tcl.packageinstaller.service` 秒关，只能走 TCL 应用商店 | `adb install` / U 盘直装，重启后仍有效 |
 | 遥控器语音键 | 拉起讯飞语音助手，弹广告，打不出字 | 语音输入法，说完直接上屏到任意输入框 |
-| 看电视直播 | 无（原厂只剩已下架的 VOD 入口） | 自建直播 App，37 个频道：央视 1–17 + 10 个央视付费频道 + 10 个卫视 |
+| 看电视直播 | 无（原厂只剩已下架的 VOD 入口） | 自建直播 App，60 个频道：央视 1–17 + CGTN 三语 + 28 个卫视 + 翡翠台/金鹰卡通 + 10 个央视付费频道 |
 | 第三方 App | 0 | 10 个（其中 3 个是本仓库自研） |
 | 桌面图标 | 海报位，比例各不相同 | 统一横幅磁贴 |
 
@@ -37,7 +37,7 @@
 
 | 目录 | 内容 |
 |---|---|
-| [`livetv/`](livetv/) | 自建直播 App（`com.local.livetv`），37 个央视/卫视频道，遥控器换台 |
+| [`livetv/`](livetv/) | 自建直播 App（`com.local.livetv`），60 个央视/卫视频道，遥控器换台，卡流 12 秒自动换源 |
 | [`voicekey/`](voicekey/) | 把遥控器语音键做成**语音输入法**（`com.iflytek.sample.view`），说句话直接上屏 |
 | [`launcher/`](launcher/) | [cleanyourtv](https://github.com/Gathin23/cleanyourtv) v2.5 的 fork：API 23 移植 + 天气卡 / 程序坞编辑 / 长按卸载 / 图标统一 |
 | [`tools/`](tools/) | 设备侧工具：TCL root 通道、APK 结构侦察、部署脚本 |
