@@ -41,7 +41,7 @@
 | [`voicekey/`](voicekey/) | 把遥控器语音键做成**语音输入法**（`com.iflytek.sample.view`），说句话直接上屏 |
 | [`launcher/`](launcher/) | [cleanyourtv](https://github.com/Gathin23/cleanyourtv) v2.5 的 fork：API 23 移植 + 天气卡 / 程序坞编辑 / 长按卸载 / 图标统一 |
 | [`tools/`](tools/) | 设备侧工具：TCL root 通道、APK 结构侦察、部署脚本 |
-| [`docs/`](docs/) | [东芝65U6900C-优化记录.md](docs/东芝65U6900C-优化记录.md) —— 二十四节完整实测记录（内存/CPU 口径、包清单、踩坑、回滚命令） |
+| [`docs/`](docs/) | [东芝65U6900C-优化记录.md](docs/东芝65U6900C-优化记录.md) —— 二十五节完整实测记录（内存/CPU 口径、包清单、ADB 开关、踩坑、回滚命令） |
 
 ## 设备事实（后续所有结论的前提）
 
@@ -61,6 +61,59 @@ CPU                       = 4×Cortex-A53 1.5 GHz（ondemand）
 1. **装不上第三方 APK 不是签名问题**，是 TCL 的 `com.tcl.packageinstaller.service` 在监视并秒关系统安装器。`pm hide com.tcl.packageinstaller.service` 之后任何 APK 都能装，且跨重启保持。
 2. **遥控器语音键（厂商键 4113）会投递给当前输入法**，所以可以把语音助手变成输入法；识别本身不要自己录音（麦克风被助手独占，`AudioRecord.read()` 恒返回 0），而是复用 xiri 的 `WriteRecognizerService`（AIDL，无权限保护）并劫持它的 UI 回调通道取文字。
 3. **本机 MediaPlayer 不支持 IPv6 源**（`DataSource_M3U8: httpResponseCode=0` 死循环），直播源必须用 IPv4。
+
+## 打开 ADB 调试
+
+这台机器**出厂就开着 ADB over TCP 5555**，不需要开发者选项，也不用遥控器输密码。证据在系统镜像里：
+
+```
+/system/build.prop:73  service.adb.tcp.port=5555
+/system/build.prop:74  persist.adb.tcp.port=5555
+/system/build.prop:75  persist.service.adb.enable=1
+/system/build.prop:76  ro.adb.secure=1
+```
+
+只要电视和电脑在同一网段：
+
+```bash
+adb connect 192.168.1.11:5555
+```
+
+首次连接电视上会弹「允许 USB 调试吗？」，勾**一律允许**再确定（`ro.adb.secure=1`，必须授权一次；授权后公钥写进 `/data/misc/adb/adb_keys`，重启不丢）。
+
+验证：
+
+```bash
+adb devices          # 192.168.1.11:5555   device
+adb shell getprop | grep adb
+# [init.svc.adbd]: [running]
+# [persist.adb.tcp.port]: [5555]
+# [persist.service.adb.enable]: [1]
+```
+
+### 如果 ADB 被关了
+
+设置里没有「开发者选项」这个入口，TCL 把它藏了。系统设置 APK（`com.tcl.settings`）里确实有这套 UI——`layout_adb`、`common_adb`（标签就叫「ADB」）、`getCurAdbState`、`updateAdbText` 这些符号都在，状态读的是 `persist.sys.service.adbd.enable`（日志里是 `getCurAdbState sysconfig = running`）。
+
+入口是 **设置 → 系统 → 系统信息**，然后遥控器依次按 **上 / 下 / 左 / 右**。
+
+> 这条路径来自早期操作记录。写文档时在这台机器上复验，三级页面打不开——`E/com.tcl.settings.view.ThirdView: layout == null`，点「系统信息」后 Activity 直接 finish 回桌面，所以没能再走一遍。ADB 本来就开着，也没必要。
+
+### 其它打开方式
+
+- **有 root shell 时**（见 [`tools/`](tools/)）：
+  ```bash
+  setprop persist.service.adb.enable 1
+  setprop persist.adb.tcp.port 5555
+  stop adbd; start adbd
+  ```
+- **USB**：`/default.prop` 里 `persist.sys.usb.config=adb`，插 USB 也能连；但这机器没有 USB-A 主机口，实际都走网络。
+
+### 关掉
+
+```bash
+adb shell setprop persist.service.adb.enable 0    # 重启后 adbd 不再起
+```
 
 ## 构建前提
 
