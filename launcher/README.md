@@ -1,3 +1,6 @@
+> **已退役（2026-10-30）**：这台电视的桌面已换成 [Aerial](https://github.com/pengchujin/aerial-tv)（见仓库根目录的 README）。
+> 本目录的 cleanyourtv fork（tvhome）源码留档备用，电视上已卸载（pm uninstall --user 0 com.gathin.tvhome）。
+> 保留它的原因：它证明了这台机器上第三方桌面能装、能接管 Home，也留下了「LEANBACK_LAUNCHER 才进桌面程序坞」的实测。
 # launcher —— cleanyourtv 的 API 23 移植与补丁
 
 [cleanyourtv](https://github.com/Gathin23/cleanyourtv) 是一个很干净的 Android TV 桌面（MIT）。上游要求 **Android 8.0（API 26）**，这台电视只有 **Android 6.0（API 23）**，所以 fork 了一份做移植，顺带补了几个自用功能。

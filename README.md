@@ -8,20 +8,20 @@
 
 ![改完之后的桌面](docs/img/home.png)
 
-*实拍（1920×1080）：cleanyourtv 移植版桌面 —— 顶部天气卡（当前 / 明天 / 后天），下面一排应用磁贴，最底是程序坞。*
+*实拍（1920×1080）：Aerial 桌面 —— 顶部天气与时钟，下面一排应用磁贴。*
 
 ## 优化前后对比
 
 | 维度 | 原厂 | 现在 |
 |---|---|---|
-| 桌面 | TCL 瀑布流 `com.tcl.cyberui`，系统里唯一的 HOME 提供者，Home 键强制回弹，换不了 | cleanyourtv 移植版：天气卡 + 磁贴 + 程序坞，可换、可编辑、可长按卸载 |
+| 桌面 | TCL 瀑布流 `com.tcl.cyberui`，系统里唯一的 HOME 提供者，Home 键强制回弹，换不了 | Aerial（`pengchujin/aerial-tv`）：自动枚举全部应用、天气时钟、可编辑布局；Home 键用自研 `homekey/` 接回来 |
 | 开机 | 先播 TCL 开机广告（`com.tcl.bootadservice`） | 直接进桌面 |
 | 预装常驻 | 广告 / 统计 / 推送 / 应用商店 / OTA / 语音助手全套在跑 | 31 个 `pm hide`（4 个因语音输入法需要已恢复，实冻 27），`rollback.ps1` 一条命令还原 |
 | 装第三方 APK | 被 `com.tcl.packageinstaller.service` 秒关，只能走 TCL 应用商店 | `adb install` / U 盘直装，重启后仍有效 |
 | 遥控器语音键 | 拉起讯飞语音助手，弹广告，打不出字 | 语音输入法，说完直接上屏到任意输入框 |
-| 看电视直播 | 无（原厂只剩已下架的 VOD 入口） | 自建直播 App，60 个频道：央视 1–17 + CGTN 三语 + 28 个卫视 + 翡翠台/金鹰卡通 + 10 个央视付费频道 |
-| 第三方 App | 0 | 10 个（其中 3 个是本仓库自研） |
-| 桌面图标 | 海报位，比例各不相同 | 统一横幅磁贴 |
+| 看电视直播 | 无（原厂只剩已下架的 VOD 入口） | 自建直播 App + NAS 上的自建 IPTV 服务：141 个频道（央视/卫视/港澳台/地方台），带 EPG、收藏夹、高清优先 |
+| 第三方 App | 0 | 10 个（其中 4 个是本仓库自研） |
+| 桌面图标 | 海报位，比例各不相同 | Aerial 的统一磁贴 |
 
 ### 没有变的（也是软件优化的天花板）
 
@@ -37,11 +37,12 @@
 
 | 目录 | 内容 |
 |---|---|
-| [`livetv/`](livetv/) | 自建直播 App（`com.local.livetv`），60 个央视/卫视频道，遥控器换台，卡流 12 秒自动换源 |
+| [`livetv/`](livetv/) | 自建直播 App（`com.local.livetv`）：拉 NAS 上的 IPTV 订阅，141 个频道，EPG、收藏夹、数字键选台、高清优先、半透明玻璃列表 |
 | [`voicekey/`](voicekey/) | 把遥控器语音键做成**语音输入法**（`com.iflytek.sample.view`），说句话直接上屏 |
-| [`launcher/`](launcher/) | [cleanyourtv](https://github.com/Gathin23/cleanyourtv) v2.5 的 fork：API 23 移植 + 天气卡 / 程序坞编辑 / 长按卸载 / 图标统一 |
+| [`homekey/`](homekey/) | Home 键修复（`com.local.homekey`）：用无障碍服务接住系统的 `homekey` 广播，把 Aerial 拉回前台 |
+| [`launcher/`](launcher/) | **已退役**：[cleanyourtv](https://github.com/Gathin23/cleanyourtv) v2.5 的 fork（API 23 移植），2026-10-30 起桌面换成 Aerial，源码留档 |
 | [`tools/`](tools/) | 设备侧工具：TCL root 通道、APK 结构侦察、部署脚本 |
-| [`docs/`](docs/) | [东芝65U6900C-优化记录.md](docs/东芝65U6900C-优化记录.md) —— 二十五节完整实测记录（内存/CPU 口径、包清单、ADB 开关、踩坑、回滚命令） |
+| [`docs/`](docs/) | [东芝65U6900C-优化记录.md](docs/东芝65U6900C-优化记录.md) —— 二十八节完整实测记录（内存/CPU 口径、包清单、ADB 开关、Aerial 桌面、IPTV 部署、踩坑、回滚命令） |
 
 ## 设备事实（后续所有结论的前提）
 
@@ -126,6 +127,10 @@ adb shell setprop persist.service.adb.enable 0    # 重启后 adbd 不再起
 
 `launcher/` 例外，它是 Gradle 工程，需要 JDK 17 + Android SDK Platform 34。
 
+`homekey/` 用的是 aapt2（`livetv/` 用 aapt），因为它的 `res/xml/accessibility-service` 配置需要 aapt2 的资源处理。
+
 ## 许可
 
 本仓库自有代码为 MIT。`launcher/` 基于上游 [cleanyourtv](https://github.com/Gathin23/cleanyourtv) 亦为 MIT（Copyright © 2026 Gathin），改动文件保留上游版权声明。
+
+Aerial 桌面本体不随本仓库分发，从 [pengchujin/aerial-tv](https://github.com/pengchujin/aerial-tv) 自行获取（MIT）。

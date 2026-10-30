@@ -21,3 +21,6 @@ __pycache__/
 *.log
 .DS_Store
 Thumbs.db
+
+# v4 signature files (build artifacts)
+*.idsig
