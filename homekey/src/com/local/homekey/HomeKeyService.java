@@ -63,6 +63,11 @@ public class HomeKeyService extends AccessibilityService {
     private long lastActionAt = 0;
     private boolean firstTickLogged = false;
 
+    /** 开机兜底最多尝试几次。 */
+    private static final int BOOT_TRIES_MAX = 8;
+
+    private int bootTries = 0;
+
     @Override
     public void onServiceConnected() {
         super.onServiceConnected();
@@ -83,7 +88,14 @@ public class HomeKeyService extends AccessibilityService {
         handler.removeCallbacks(watchdog);
         handler.postDelayed(watchdog, TICK_MS);
 
-        Log.i(TAG, "service connected; key filter + usage watchdog armed");
+        // 开机兜底：本机没有 HOME，TCL 的开机流程会一直等"第一个 Activity 显示出来"，
+        // sys.boot_completed 永远不置位，卡在开机动画的 loading_ui。
+        // 无障碍服务在 boot_completed 之前就已经被绑定了，这里主动拉一次 Aerial 打破僵局。
+        bootTries = 0;
+        handler.removeCallbacks(bootBootstrap);
+        handler.postDelayed(bootBootstrap, 3000);
+
+        Log.i(TAG, "service connected; key filter + usage watchdog + boot bootstrap armed");
     }
 
     @Override
@@ -126,6 +138,38 @@ public class HomeKeyService extends AccessibilityService {
             handler.postDelayed(this, TICK_MS);
         }
     };
+
+    // ------------------------------------------------------- 开机兜底（无 HOME）
+
+    private final Runnable bootBootstrap = new Runnable() {
+        @Override
+        public void run() {
+            String bc = readProp("sys.boot_completed");
+            if ("1".equals(bc)) {
+                Log.i(TAG, "boot already complete; bootstrap idle");
+                return;
+            }
+            bootTries++;
+            Log.i(TAG, "boot not complete (bc='" + bc + "'); pulling Aerial up ("
+                    + bootTries + "/" + BOOT_TRIES_MAX + ")");
+            bringAerial("boot-bootstrap");
+            if (bootTries < BOOT_TRIES_MAX) {
+                handler.postDelayed(this, 5000);
+            }
+        }
+    };
+
+    /** 读系统属性（只读，不需要权限）。 */
+    private String readProp(String key) {
+        try {
+            Class<?> sp = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method get = sp.getMethod("get", String.class);
+            Object v = get.invoke(null, key);
+            return v == null ? "" : v.toString();
+        } catch (Throwable t) {
+            return "";
+        }
+    }
 
     private void tick() {
         if (!isScreenOn()) {
