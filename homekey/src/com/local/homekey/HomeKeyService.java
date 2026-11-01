@@ -49,6 +49,15 @@ public class HomeKeyService extends AccessibilityService {
     /** 两次拉起之间的冷却。 */
     private static final long COOLDOWN_MS = 8000;
 
+    /** 同一个后台事件，隔多久之后才允许再处理一次（防止 Aerial 起不来时永久失效）。 */
+    private static final long REPEAT_GUARD_MS = 120000;
+
+    /** 一次前台事件都没看到多久之后，判定为卡死。 */
+    private static final long NO_FG_STUCK_MS = 15000;
+
+    /** 上面那种情况下重试的间隔。 */
+    private static final long NO_FG_RETRY_MS = 60000;
+
     /** 退到后台后多久没人接盘就判定为卡死。 */
     private static final long STUCK_MS = 3000;
 
@@ -62,6 +71,42 @@ public class HomeKeyService extends AccessibilityService {
 
     private long lastActionAt = 0;
     private boolean firstTickLogged = false;
+
+    /** 连续判定为异常的计数（防抖动）。 */
+    private int badStrikes = 0;
+
+    /** 已经处理过的那个后台事件的时间戳，避免同一事件反复触发。 */
+    private long lastHandledBgAt = 0;
+
+    /** 从什么时候开始一直没看到前台事件。 */
+    private long noFgSince = 0;
+
+    /** no-fg 兜底是否已经用过（一生只兜一次，避免周期性拉桌面）。 */
+    private boolean noFgHandled = false;
+
+    /** 真有窗口在前台吗（getWindows 在本机被厂商砍了，改用活动窗口判断）。 */
+    private boolean hasActiveWindow() {
+        try {
+            android.view.accessibility.AccessibilityNodeInfo root = getRootInActiveWindow();
+            return root != null;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** 是否正处于屏保（dream）。 */
+    private volatile boolean dreaming = false;
+
+    private final BroadcastReceiver dreamReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            boolean started = Intent.ACTION_DREAMING_STARTED.equals(intent.getAction());
+            dreaming = started;
+            noFgSince = 0;
+            badStrikes = 0;
+            Log.i(TAG, "dreaming=" + dreaming);
+        }
+    };
 
     /** 开机兜底最多尝试几次。 */
     private static final int BOOT_TRIES_MAX = 8;
@@ -83,6 +128,18 @@ public class HomeKeyService extends AccessibilityService {
             registerReceiver(homeBroadcast, f);
         } catch (Exception e) {
             Log.w(TAG, "could not watch CLOSE_SYSTEM_DIALOGS", e);
+        }
+
+        // 屏保（dream）不是 Activity，前台事件链会断，看门狗会误判成"卡死"，
+        // 拉 Aerial 又会把屏保顶掉、屏保再起来 —— 来回拉会把系统拖垮。
+        // 所以屏保期间必须停手。
+        try {
+            IntentFilter df = new IntentFilter();
+            df.addAction(Intent.ACTION_DREAMING_STARTED);
+            df.addAction(Intent.ACTION_DREAMING_STOPPED);
+            registerReceiver(dreamReceiver, df);
+        } catch (Exception e) {
+            Log.w(TAG, "could not watch dream state", e);
         }
 
         handler.removeCallbacks(watchdog);
@@ -174,6 +231,17 @@ public class HomeKeyService extends AccessibilityService {
     private void tick() {
         if (!isScreenOn()) {
             lastQueryAt = 0;
+            noFgSince = 0;
+            badStrikes = 0;
+            return;
+        }
+
+        // 屏保期间彻底停手：屏保不是 Activity，前台事件链会断，
+        // 这时候去拉 Aerial 只会和屏保互相顶，把系统拖垮。
+        if (dreaming) {
+            lastQueryAt = 0;
+            noFgSince = 0;
+            badStrikes = 0;
             return;
         }
 
@@ -197,6 +265,8 @@ public class HomeKeyService extends AccessibilityService {
                     }
                     curFgPkg = e.getPackageName();
                     curFgAt = e.getTimeStamp();
+                    // 有了新的前台事件，重新武装 no-fg 兜底。
+                    noFgHandled = false;
                 } else if (e.getEventType() == UsageEvents.Event.MOVE_TO_BACKGROUND) {
                     Log.i(TAG, "bg <- " + e.getPackageName());
                     lastBgPkg = e.getPackageName();
@@ -210,14 +280,37 @@ public class HomeKeyService extends AccessibilityService {
             Log.i(TAG, "watchdog first tick: fg=" + curFgPkg + ", bgAt=" + lastBgAt);
         }
 
-        // 从来没看到过前台事件，说明没权限或还没数据，不乱动。
-        if (curFgPkg == null) return;
+        // 从来没看到过前台事件。这种情况很常见（服务重启后，如果前台一直没变化，
+        // UsageStats 不会产生新事件），**不能**拿它当卡死判据 —— 否则会周期性
+        // 把桌面拉出来。这里用"当前有没有活动窗口"来确认，且一生只兜底一次。
+        if (curFgPkg == null) {
+            if (noFgHandled) return;
+            if (noFgSince == 0) noFgSince = now;
+            if (now - noFgSince < NO_FG_STUCK_MS) return;
+            if (hasActiveWindow()) {
+                // 有窗口在前台，只是 UsageStats 没给事件，什么都不用做。
+                noFgSince = 0;
+                return;
+            }
+            noFgHandled = true;
+            lastActionAt = now;
+            Log.i(TAG, "watchdog: no active window at all; pulling Aerial up (one-shot)");
+            bringAerial("watchdog-no-fg");
+            return;
+        }
+        noFgSince = 0;
 
         boolean stuck = lastBgAt > curFgAt && (now - lastBgAt) > STUCK_MS;
         if (!stuck) return;
 
+        // 同一个「退到后台」事件只处理一次。
+        // 拉起 Aerial 时它可能已经在栈里，不会产生新的 MOVE_TO_FOREGROUND，
+        // curFgAt 不更新，判定条件会一直成立 —— 那样就会每 9 秒弹一次桌面。
+        if (lastBgAt == lastHandledBgAt && (now - lastActionAt) < REPEAT_GUARD_MS) return;
+
         if (now - lastActionAt < COOLDOWN_MS) return;
         lastActionAt = now;
+        lastHandledBgAt = lastBgAt;
 
         Log.i(TAG, "watchdog: " + lastBgPkg + " went background "
                 + (now - lastBgAt) + "ms ago and nothing took over; pulling Aerial back");
@@ -261,6 +354,10 @@ public class HomeKeyService extends AccessibilityService {
         handler.removeCallbacks(watchdog);
         try {
             unregisterReceiver(homeBroadcast);
+        } catch (Exception ignored) {
+        }
+        try {
+            unregisterReceiver(dreamReceiver);
         } catch (Exception ignored) {
         }
         super.onDestroy();
