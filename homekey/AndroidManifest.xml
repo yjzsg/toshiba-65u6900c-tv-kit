@@ -7,6 +7,8 @@
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="22" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 黑屏看门狗要读前台切换事件；实际授权走 appops，不是运行时弹窗。 -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
 
     <application
         android:label="Home 键修复"

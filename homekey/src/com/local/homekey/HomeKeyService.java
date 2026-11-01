@@ -2,55 +2,93 @@ package com.local.homekey;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
+import android.app.usage.UsageEvents;
+import android.app.usage.UsageStatsManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
-import android.content.IntentFilter;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityEvent;
 
+import java.util.List;
+
 /**
- * 专门抢 Home 键的无障碍服务。
+ * Home 键 + 黑屏看门狗。
  *
- * 背景：这台 TCL 的 Home 键被 PhoneWindowManager 硬编码成启动
- * com.tcl.cyberui/.MainActivity，而这个 Activity 在本机是坏的（缺类，
- * 启动即崩），于是 Home 键按下去毫无反应。
+ * 背景一（Home 键没反应）：
+ * 这台 TCL 的 Home 键被 PhoneWindowManager 硬编码成启动 com.tcl.cyberui/.MainActivity，
+ * 而那个组件在本机是坏的，按下去毫无反应。
  *
- * Aerial 的 HomeGuardService 本该用无障碍按键过滤来接管 Home，但它在
- * Android 6 上会因为别的输入设备被误判成手柄（sim-mouse 的 sources
- * 0x2703 含 SOURCE_GAMEPAD）而主动关掉过滤，所以轮不到它。
+ * 背景二（退出 App 后黑屏）：
+ * 系统里已经没有可用的 HOME 提供者 —— cyberui 坏了，Aerial 又没法声明 CATEGORY_HOME
+ * （TCL 安装门禁会拒，实测 INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES）。
+ * 于是任何 App 退出后系统"无家可归"，焦点变 null，只有一层 KeyguardScrim 露出来 —— 全屏黑。
  *
- * 这个服务只做一件事：在 onKeyEvent 里截下 KEYCODE_HOME，按下即把
- * Aerial 拉回前台，不让事件继续传给系统（系统会去找坏掉的 cyberui）。
- * 它不声明 FLAG_DEFAULT_HOME，因此在 Android 6 的按键分发里排在
- * Aerial 之前，能第一个拿到 Home 键。
+ * 做法：
+ *   1. Home 键：接 CLOSE_SYSTEM_DIALOGS(reason=homekey) 广播 / 截 KEYCODE_HOME，拉起 Aerial；
+ *   2. 黑屏看门狗：用 UsageStatsManager 观察前台切换。如果某个 App 退到后台之后
+ *      4 秒内没有任何新的前台出现，说明系统卡住了，直接把 Aerial 拉回来。
+ *
+ * 注意：不能用 getWindows() 判断 —— 实测这台 TCL 的 WindowManagerService
+ * 没实现 getWindowsForAccessibility，服务虽然拿到了读窗口内容的权限，
+ * getWindows() 仍然返回空列表。
  */
 public class HomeKeyService extends AccessibilityService {
 
     private static final String TAG = "HomeKey";
 
-    /** Aerial 的前台 Activity。 */
-    private static final String AERIAL = "app.orchard.tv/.MainActivity";
+    /** 轮询间隔。 */
+    private static final long TICK_MS = 1500;
+
+    /** 两次拉起之间的冷却。 */
+    private static final long COOLDOWN_MS = 8000;
+
+    /** 退到后台后多久没人接盘就判定为卡死。 */
+    private static final long STUCK_MS = 3000;
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
+
+    private long lastQueryAt = 0;
+    private String curFgPkg = null;
+    private long curFgAt = 0;
+    private long lastBgAt = 0;
+    private String lastBgPkg = null;
+
+    private long lastActionAt = 0;
+    private boolean firstTickLogged = false;
 
     @Override
     public void onServiceConnected() {
         super.onServiceConnected();
-        // 必须运行时显式打开，否则收不到按键。
+
         AccessibilityServiceInfo info = getServiceInfo();
         if (info != null) {
             info.flags |= AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
             setServiceInfo(info);
         }
-        // 备用路径：系统处理 Home 键时会广播 CLOSE_SYSTEM_DIALOGS，reason=homekey。
+
         try {
             IntentFilter f = new IntentFilter("android.intent.action.CLOSE_SYSTEM_DIALOGS");
             registerReceiver(homeBroadcast, f);
         } catch (Exception e) {
             Log.w(TAG, "could not watch CLOSE_SYSTEM_DIALOGS", e);
         }
-        Log.i(TAG, "service connected, filtering keys on");
+
+        handler.removeCallbacks(watchdog);
+        handler.postDelayed(watchdog, TICK_MS);
+
+        Log.i(TAG, "service connected; key filter + usage watchdog armed");
+    }
+
+    @Override
+    public void onAccessibilityEvent(AccessibilityEvent event) {
+        // 看门狗用轮询。
     }
 
     private final BroadcastReceiver homeBroadcast = new BroadcastReceiver() {
@@ -60,7 +98,7 @@ public class HomeKeyService extends AccessibilityService {
             Log.i(TAG, "CLOSE_SYSTEM_DIALOGS reason=" + reason);
             if ("homekey".equals(reason)) {
                 Log.i(TAG, "homekey broadcast; bringing Aerial to front");
-                bringAerial();
+                bringAerial("homekey-broadcast");
             }
         }
     };
@@ -69,13 +107,91 @@ public class HomeKeyService extends AccessibilityService {
     public boolean onKeyEvent(KeyEvent event) {
         if (event.getKeyCode() != KeyEvent.KEYCODE_HOME) return false;
         if (event.getAction() == KeyEvent.ACTION_UP) {
-            Log.i(TAG, "Home taken; bringing Aerial to front");
-            bringAerial();
+            Log.i(TAG, "Home key taken; bringing Aerial to front");
+            bringAerial("home-key");
         }
         return true;
     }
 
-    private void bringAerial() {
+    // ---------------------------------------------------------------- 看门狗
+
+    private final Runnable watchdog = new Runnable() {
+        @Override
+        public void run() {
+            try {
+                tick();
+            } catch (Throwable t) {
+                Log.w(TAG, "watchdog tick failed", t);
+            }
+            handler.postDelayed(this, TICK_MS);
+        }
+    };
+
+    private void tick() {
+        if (!isScreenOn()) {
+            lastQueryAt = 0;
+            return;
+        }
+
+        UsageStatsManager usm =
+                (UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
+        if (usm == null) return;
+
+        long now = System.currentTimeMillis();
+        if (lastQueryAt == 0) lastQueryAt = now - 5000;
+
+        UsageEvents events = usm.queryEvents(lastQueryAt, now);
+        lastQueryAt = now;
+
+        if (events != null) {
+            UsageEvents.Event e = new UsageEvents.Event();
+            while (events.hasNextEvent()) {
+                events.getNextEvent(e);
+                if (e.getEventType() == UsageEvents.Event.MOVE_TO_FOREGROUND) {
+                    if (!e.getPackageName().equals(curFgPkg)) {
+                        Log.i(TAG, "fg -> " + e.getPackageName());
+                    }
+                    curFgPkg = e.getPackageName();
+                    curFgAt = e.getTimeStamp();
+                } else if (e.getEventType() == UsageEvents.Event.MOVE_TO_BACKGROUND) {
+                    Log.i(TAG, "bg <- " + e.getPackageName());
+                    lastBgPkg = e.getPackageName();
+                    lastBgAt = e.getTimeStamp();
+                }
+            }
+        }
+
+        if (!firstTickLogged) {
+            firstTickLogged = true;
+            Log.i(TAG, "watchdog first tick: fg=" + curFgPkg + ", bgAt=" + lastBgAt);
+        }
+
+        // 从来没看到过前台事件，说明没权限或还没数据，不乱动。
+        if (curFgPkg == null) return;
+
+        boolean stuck = lastBgAt > curFgAt && (now - lastBgAt) > STUCK_MS;
+        if (!stuck) return;
+
+        if (now - lastActionAt < COOLDOWN_MS) return;
+        lastActionAt = now;
+
+        Log.i(TAG, "watchdog: " + lastBgPkg + " went background "
+                + (now - lastBgAt) + "ms ago and nothing took over; pulling Aerial back");
+        bringAerial("watchdog");
+    }
+
+    private boolean isScreenOn() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            return pm != null && pm.isInteractive();
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    // ---------------------------------------------------------------- 动作
+
+    private void bringAerial(String from) {
         try {
             Intent i = new Intent(Intent.ACTION_MAIN);
             i.addCategory(Intent.CATEGORY_HOME);
@@ -85,16 +201,24 @@ public class HomeKeyService extends AccessibilityService {
                     | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             i.putExtra("bringBack", true);
             startActivity(i);
+            Log.i(TAG, "Aerial started (from=" + from + ")");
         } catch (Exception e) {
             Log.w(TAG, "could not start Aerial", e);
         }
     }
 
     @Override
-    public void onAccessibilityEvent(AccessibilityEvent event) {
+    public void onInterrupt() {
+        handler.removeCallbacks(watchdog);
     }
 
     @Override
-    public void onInterrupt() {
+    public void onDestroy() {
+        handler.removeCallbacks(watchdog);
+        try {
+            unregisterReceiver(homeBroadcast);
+        } catch (Exception ignored) {
+        }
+        super.onDestroy();
     }
 }

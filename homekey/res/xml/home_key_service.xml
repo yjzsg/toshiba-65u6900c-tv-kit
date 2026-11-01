@@ -3,7 +3,7 @@
     android:description="@string/hk_svc_desc"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagRequestFilterKeyEvents"
-    android:canRetrieveWindowContent="false"
+    android:accessibilityFlags="flagRequestFilterKeyEvents|flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="true"
     android:canRequestFilterKeyEvents="true"
     android:notificationTimeout="0" />
